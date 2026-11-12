@@ -174,14 +174,44 @@ await test('saveMeal sa inzulin_dat:true takođe provjerava raniji bolus', async
   provjeri(r.ok === false && r.warning === 'recent_bolus', 'očekivano upozorenje recent_bolus', r);
 });
 
-await test('isto očitanje šećera sa dva uređaja upisuje se jednom', async () => {
-  const t = BAZA + 14 * H + Math.floor(Math.random() * 600) * 1000;
-  const r1 = await poziv(T1, 'saveGlucose', { readings: [{ time: iso(t), mgdl: 140 }] });
+// Šećer: jedan red po 5-minutnom slotu (SPEC 5 i 6). Slotovi se biraju poravnati na 5 min,
+// da test ne zavisi od toga gdje unutar slota padne slučajno vrijeme.
+const SLOT = 5 * M;
+const SLOT_A = Math.floor((BAZA + 14 * H) / SLOT) * SLOT;
+
+await test('isto očitanje šećera sa dva uređaja upisuje se jednom (isti slot)', async () => {
+  const r1 = await poziv(T1, 'saveGlucose', { readings: [{ time: iso(SLOT_A + 30000), mgdl: 140 }] });
   provjeri(r1.ok === true && r1.upisano === 1, 'prvo očitanje nije upisano', r1);
-  const r2 = await poziv(T2, 'saveGlucose', { readings: [{ time: iso(t + 10000), mgdl: 141 }] });
+  // Drugi uređaj, isto očitanje sa vremenom pomjerenim 40 s, i dalje u istom slotu.
+  const r2 = await poziv(T2, 'saveGlucose', { readings: [{ time: iso(SLOT_A + 70000), mgdl: 141 }] });
   provjeri(r2.ok === true && r2.upisano === 0 && r2.preskoceno === 1, 'drugo očitanje nije preskočeno', r2);
-  const r3 = await poziv(T1, 'getGlucose', { from: iso(t - M), to: iso(t + M) });
+  const r3 = await poziv(T1, 'getGlucose', { from: iso(SLOT_A), to: iso(SLOT_A + SLOT - 1) });
   provjeri(r3.ok === true && r3.readings.length === 1 && r3.readings[0].mgdl === 140, 'getGlucose ne vraća tačno jedno očitanje', r3);
+});
+
+await test('očitanje u susjednom slotu se upisuje', async () => {
+  // 10 s nakon granice slota: blizu prethodnog očitanja, ali novi slot.
+  const r = await poziv(T2, 'saveGlucose', { readings: [{ time: iso(SLOT_A + SLOT + 10000), mgdl: 142 }] });
+  provjeri(r.ok === true && r.upisano === 1 && r.preskoceno === 0, 'očitanje u novom slotu nije upisano', r);
+});
+
+await test('više očitanja istog slota u jednom zahtjevu: upisuje se najranije', async () => {
+  const s = SLOT_A + 3 * SLOT;
+  const r = await poziv(T1, 'saveGlucose', {
+    readings: [
+      { time: iso(s + 120000), mgdl: 152 },
+      { time: iso(s + 0), mgdl: 150 },
+      { time: iso(s + 60000), mgdl: 151 },
+    ],
+  });
+  provjeri(r.ok === true && r.upisano === 1 && r.preskoceno === 2, 'očekivano 1 upisano i 2 preskočena', r);
+  const g = await poziv(T1, 'getGlucose', { from: iso(s), to: iso(s + SLOT - 1) });
+  provjeri(g.ok === true && g.readings.length === 1 && g.readings[0].mgdl === 150, 'nije upisano najranije očitanje', g);
+});
+
+await test('saveGlucose odbacuje očitanje starije od 7 dana', async () => {
+  const r = await poziv(T1, 'saveGlucose', { readings: [{ time: iso(Date.now() - 8 * 24 * H), mgdl: 120 }] });
+  provjeri(r.ok === true && r.odbaceno === 1 && r.upisano === 0, 'očekivano 1 odbačeno', r);
 });
 
 await test('saveGlucose odbacuje nemoguće vrijednosti', async () => {

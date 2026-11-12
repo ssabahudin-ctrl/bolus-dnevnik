@@ -1,6 +1,6 @@
 /**
  * Bolus dnevnik - backend (Google Apps Script vezan za Google Sheet)
- * Implementira SPEC.md v0.2, tačke 5 i 6.
+ * Implementira SPEC.md v0.3, tačke 5 i 6.
  *
  * Svi zahtjevi idu kao POST sa Content-Type: text/plain i JSON tijelom:
  *   { "token": "...", "action": "saveMeal" | "confirm" | "saveGlucose" | "getGlucose"
@@ -14,7 +14,7 @@
  */
 
 const TZ = 'Europe/Sarajevo';
-const VERZIJA_API = '0.2.0';
+const VERZIJA_API = '0.3.1';
 
 const SHEMA = {
   Obroci: ['id', 'vrijeme_unosa', 'uredjaj', 'tip', 'stavke_tekst', 'uh_ukupno_g',
@@ -25,7 +25,7 @@ const SHEMA = {
   Namirnice: ['naziv', 'uh_na_100g', 'zadnja_gramaza_g', 'dodao_uredjaj'],
   Postavke: ['kljuc', 'vrijednost', 'izmijenjeno', 'izmijenio_uredjaj'],
   Uredjaji: ['naziv', 'token', 'aktivan', 'smije_mijenjati_postavke', 'zadnji_kontakt'],
-  Secer: ['vrijeme', 'mgdl', 'mmol', 'uredjaj'],
+  Secer: ['slot', 'vrijeme', 'mgdl', 'mmol', 'uredjaj'],
 };
 
 const TIPOVI_OBROKA = ['doručak', 'ručak', 'večera', 'užina', 'korekcija'];
@@ -37,7 +37,6 @@ const POSTAVKE = {
   fia: { tip: 'broj', min: 0.1, max: 20 },
   cilj_mmol: { tip: 'broj', min: 3, max: 15 },
   korak: { tip: 'broj', min: 0.05, max: 2 },
-  zaokruzivanje: { tip: 'izbor', vrijednosti: ['najblize', 'nanize'] },
   hipo_prag: { tip: 'broj', min: 2, max: 6 },
   max_doza: { tip: 'broj', min: 1, max: 100 },
   prozor_dupli_bolus_min: { tip: 'broj', min: 0, max: 600 },
@@ -50,9 +49,10 @@ const POSTAVKE = {
 // hipo_prag, opseg) ostaju prazne dok ih ne upiše korisnik.
 const PODRAZUMIJEVANE = { prozor_dupli_bolus_min: 120, zastarjelo_min: 10, max_doza: 20 };
 
-const SECER_MAX_STAROST_DANA = 3;   // starija očitanja server odbacuje
-const SECER_REP_ZA_DUPLIKATE = 10000; // koliko zadnjih redova lista Secer se gleda za duplikate
-const SECER_TOLERANCIJA_MS = 30000;
+// SPEC 6: jedan red po 5-minutnom slotu; provjera duplikata samo kroz zadnjih 7 dana.
+const SECER_MAX_STAROST_DANA = 7;   // starija očitanja server odbacuje
+const SECER_REP_ZA_DUPLIKATE = 5000; // zadnji redovi lista Secer koji se čitaju (7 dana je oko 2016 redova)
+const SECER_SLOT_MS = 5 * 60000;
 const SECER_MAX_PROZOR_H = 48;
 const MS_MIN = 60000;
 
@@ -255,32 +255,40 @@ function saveGlucose_(ss, ur, req) {
       odbaceno++;
       return;
     }
-    validna.push({ t: t, mg: Math.round(mg) });
+    validna.push({ t: t, slot: slot_(t), mg: Math.round(mg) });
   });
   if (!validna.length) return { ok: true, upisano: 0, preskoceno: 0, odbaceno: odbaceno };
 
+  // Zauzeti slotovi iz zadnjih redova lista. Slot se računa iz kolone vrijeme, pa radi
+  // i za stare redove upisane prije uvođenja kolone slot.
   const sh = list_(ss, 'Secer');
   const zadnji = sh.getLastRow();
   const n = Math.min(Math.max(zadnji - 1, 0), SECER_REP_ZA_DUPLIKATE);
-  const postojeca = n
-    ? sh.getRange(zadnji - n + 1, 1, n, 1).getValues()
-      .map(function (r) { return r[0] instanceof Date ? r[0].getTime() : NaN; })
-      .filter(function (x) { return isFinite(x); })
-    : [];
-  postojeca.sort(function (a, b) { return a - b; });
-  validna.sort(function (a, b) { return a.t - b.t; });
+  const zauzeti = {};
+  if (n) {
+    const zag = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(String);
+    const kVrijeme = zag.indexOf('vrijeme');
+    if (kVrijeme < 0) throw greska_('setup', 'nedostaje kolona vrijeme u listu Secer - pokreni setup()');
+    sh.getRange(zadnji - n + 1, kVrijeme + 1, n, 1).getValues().forEach(function (r) {
+      if (r[0] instanceof Date) zauzeti[slot_(r[0].getTime())] = true;
+    });
+  }
 
+  // Unutar slota se upisuje prvo (najranije) očitanje.
+  validna.sort(function (a, b) { return a.t - b.t; });
   const novi = [];
   let preskoceno = 0;
   validna.forEach(function (v) {
-    const i = donjaGranica_(postojeca, v.t - SECER_TOLERANCIJA_MS);
-    if (i < postojeca.length && postojeca[i] <= v.t + SECER_TOLERANCIJA_MS) { preskoceno++; return; }
-    postojeca.splice(donjaGranica_(postojeca, v.t), 0, v.t);
+    if (zauzeti[v.slot]) { preskoceno++; return; }
+    zauzeti[v.slot] = true;
     novi.push(v);
   });
 
   dodajRedove_(sh, novi.map(function (v) {
-    return { vrijeme: new Date(v.t), mgdl: v.mg, mmol: Math.round(v.mg / 18.016 * 10) / 10, uredjaj: ur.naziv };
+    return {
+      slot: new Date(v.slot), vrijeme: new Date(v.t), mgdl: v.mg,
+      mmol: Math.round(v.mg / 18.016 * 10) / 10, uredjaj: ur.naziv,
+    };
   }));
   return { ok: true, upisano: novi.length, preskoceno: preskoceno, odbaceno: odbaceno };
 }
@@ -511,14 +519,10 @@ function serializuj_(o) {
   return r;
 }
 
-// Prvi indeks u sortiranom nizu a za koji je a[i] >= x.
-function donjaGranica_(a, x) {
-  let lo = 0, hi = a.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if (a[mid] < x) lo = mid + 1; else hi = mid;
-  }
-  return lo;
+// Početak 5-minutnog slota (ms), vrijeme zaokruženo naniže. Sarajevo ima pomak u cijelim
+// satima, pa se granice slotova poklapaju i sa lokalnim vremenom.
+function slot_(ms) {
+  return Math.floor(ms / SECER_SLOT_MS) * SECER_SLOT_MS;
 }
 
 function noviToken_() {

@@ -109,11 +109,12 @@ Ulazi: `uh_ukupno_g`, `secer_mmol` (može biti null), `uh_odnos` (g UH po 1 j.),
 bolus_obrok     = uh_ukupno_g / uh_odnos
 bolus_korekcija = secer_mmol == null ? 0 : (secer_mmol - cilj_mmol) / fia
 sirovo          = max(0, bolus_obrok + bolus_korekcija)
-preporuka_j     = zaokruzi(sirovo, korak)      // pravilo: vidi 12
+preporuka_j     = zaokruziNanize(sirovo, korak) // uvijek naniže na najbliži manji višekratnik koraka
 ```
 
 Pravila:
 
+- Zaokruživanje je uvijek naniže (odluka 12.11.2026): preporuka nikad nije veća od sirovog izračuna. Primjer sa korakom 0.5: 2.25 i 2.4 daju 2.0, 6.3 daje 6.0. Zbog greške decimalnog računa vrijednost koja je na 1e-9 ispod višekratnika koraka (npr. 7.4999999) računa se kao taj višekratnik (7.5), a ne kao korak niže.
 - `secer_mmol < hipo_prag`: nema preporuke; poruka da se prvo riješi hipoglikemija. Unos hrane se i dalje može sačuvati.
 - Šećer ispod cilja a iznad praga: korekcija je negativna i umanjuje bolus za obrok.
 - Bez šećera: računa se samo bolus za obrok, jasno označeno.
@@ -160,8 +161,8 @@ Jezik: bosanski. Decimalni unos prihvata zarez i tačku. Dodirne površine najma
 | UH g | šećer | odnos | FIA | cilj | korak | očekivano |
 |---|---|---|---|---|---|---|
 | 63 | 8.4 | 10 | 2.0 | 6.0 | 0.5 | obrok 6.3, korekcija 1.2, preporuka 7.5 |
-| 63 | null | 10 | 2.0 | 6.0 | 0.5 | obrok 6.3, korekcija 0, preporuka 6.5, oznaka "bez šećera" |
-| 30 | 4.5 | 10 | 2.0 | 6.0 | 0.5 | obrok 3.0, korekcija -0.75, sirovo 2.25; tačno na pola koraka, preporuka 2.0 ili 2.5 zavisno od pravila iz tačke 12 |
+| 63 | null | 10 | 2.0 | 6.0 | 0.5 | obrok 6.3, korekcija 0, preporuka 6.0, oznaka "bez šećera" |
+| 30 | 4.5 | 10 | 2.0 | 6.0 | 0.5 | obrok 3.0, korekcija -0.75, sirovo 2.25, preporuka 2.0 |
 | 0 | 10.0 | 10 | 2.0 | 6.0 | 0.5 | preporuka 2.0 |
 | 10 | 4.0 | 10 | 1.0 | 6.0 | 0.5 | sirovo -1.0, preporuka 0 |
 | 40 | 3.5 | 10 | 2.0 | 6.0 | 0.5 | nema preporuke (hipo prag 3.9) |
@@ -173,7 +174,6 @@ Testovi servera (minimum): dupli `saveMeal`; `confirm` sa i bez prethodnog bolus
 
 - Šta tačno znači FIA u terapiji i u kojim jedinicama se vodi.
 - Da li se UH odnos vodi kao "g UH po 1 j." ili drugačije.
-- Zaokruživanje: na najbliži korak ili uvijek naniže.
 - Šta znači "aplikacija sama računa" (ukupna dnevna doza ili profili po dobu dana).
 - Verzije Androida na ostala četiri telefona (prvi: Redmi Note 9 Pro, Android 12).
 - Da li na ostala četiri telefona rade Juggluco, GDH i broadcast prema omotaču (na prvom radi, Faza 1).
