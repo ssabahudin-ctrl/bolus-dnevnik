@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Dugme "Baterija" otvara sistemski dijalog za isključenje optimizacije baterije. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <application
+        android:name=".App"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="false"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Tema"
+        android:usesCleartextTraffic="false">
+
+        <activity
+            android:name=".MainActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|uiMode|density"
+            android:exported="true"
+            android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Link za uparivanje (https://<pages>/#pair=...) se može otvoriti u omotaču.
+                 Bez autoVerify: korisnik ga uključi u "Otvaraj podržane linkove". -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:host="${webHost}"
+                    android:pathPrefix="${webPath}"
+                    android:scheme="https" />
+            </intent-filter>
+        </activity>
+
+        <!-- GDH šalje broadcast eksplicitno našem paketu (SPEC 3). -->
+        <receiver
+            android:name=".GlucoReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="glucodata.Minute" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

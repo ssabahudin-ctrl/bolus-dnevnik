@@ -3,6 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Bez iframeova: most GlucoBridge iz Android omotača ne smije biti dostupan tuđem okviru. -->
+    <meta http-equiv="Content-Security-Policy" content="frame-src 'none'; object-src 'none'; base-uri 'self'" />
     <title>Bolus dnevnik</title>
   </head>
   <body>

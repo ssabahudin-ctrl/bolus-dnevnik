@@ -1,0 +1,54 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 1,
+    "identityHash": "ff53bfb2d89e0c518eead4fefda0bdac",
+    "entities": [
+      {
+        "tableName": "ocitanja",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`vrijeme_ms` INTEGER NOT NULL, `mgdl` INTEGER NOT NULL, `rate` REAL, `izvor` TEXT NOT NULL, `poslano` INTEGER NOT NULL, PRIMARY KEY(`vrijeme_ms`))",
+        "fields": [
+          {
+            "fieldPath": "vrijemeMs",
+            "columnName": "vrijeme_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mgdl",
+            "columnName": "mgdl",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rate",
+            "columnName": "rate",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "izvor",
+            "columnName": "izvor",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "poslano",
+            "columnName": "poslano",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "vrijeme_ms"
+          ]
+        }
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'ff53bfb2d89e0c518eead4fefda0bdac')"
+    ]
+  }
+}

@@ -3,6 +3,7 @@
 import { ApiGreska, pozoviBezUpozorenja, pozovi } from './api';
 import type { Konfig } from './konfig';
 import { noviNacrt, type Nacrt } from './obrok';
+import { konfigIzOmotaca, upisiKonfigUOmotac } from './omotac';
 import { AndroidBridgeAdapter, ManualAdapter, getGlucose, type Ocitanje } from './secer';
 import type { Bootstrap } from './tipovi';
 
@@ -46,7 +47,14 @@ export function noviId(): string {
 }
 
 class Stanje {
-  konfig: Konfig | null = skladiste.citaj<Konfig>(K.konfig);
+  readonly manual = new ManualAdapter();
+  readonly most: AndroidBridgeAdapter | null = AndroidBridgeAdapter.dostupan() ? new AndroidBridgeAdapter() : null;
+
+  /**
+   * U omotaču konfiguracija (sa tokenom) živi samo u njegovom šifrovanom skladištu, jer je
+   * treba i UploadWorker. U pregledniku je u localStorage.
+   */
+  konfig: Konfig | null = this.most?.api ? konfigIzOmotaca(this.most.api) : skladiste.citaj<Konfig>(K.konfig);
   boot: Bootstrap | null = skladiste.citaj<Bootstrap>(K.boot);
   bootVrijeme: Date | null = (() => {
     const s = skladiste.citaj<string>(K.bootVrijeme);
@@ -61,8 +69,6 @@ class Stanje {
   nacrt: Nacrt = skladiste.citaj<Nacrt>(K.nacrt) ?? noviNacrt(noviId());
   tabelaUrl: string = skladiste.citaj<string>(K.tabela) ?? '';
 
-  readonly manual = new ManualAdapter();
-  readonly most: AndroidBridgeAdapter | null = AndroidBridgeAdapter.dostupan() ? new AndroidBridgeAdapter() : null;
   /** Vrijeme očitanja koje je korisnik potvrdio iako je zastarjelo. */
   potvrdjenoZastarjeloMs: number | null = null;
 
@@ -92,10 +98,14 @@ class Stanje {
     this.sacuvajNacrt();
   }
 
+  /** Baca grešku ako omotač odbije konfiguraciju; tada se ništa ne mijenja. */
   postaviKonfig(k: Konfig | null): void {
-    this.konfig = k;
-    if (k) skladiste.pisi(K.konfig, k);
+    if (this.most?.api) {
+      upisiKonfigUOmotac(this.most.api, k);
+      skladiste.brisi(K.konfig);
+    } else if (k) skladiste.pisi(K.konfig, k);
     else skladiste.brisi(K.konfig);
+    this.konfig = k;
     // Keš pripada uparenom uređaju.
     this.boot = null;
     this.bootVrijeme = null;

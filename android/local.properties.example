@@ -1,0 +1,4 @@
+# Kopiraj u local.properties (nije u gitu) i prilagodi.
+sdk.dir=C:/Users/<korisnik>/AppData/Local/Android/Sdk
+# Adresa web dijela na GitHub Pages, sa kosom crtom na kraju.
+bolus.webUrl=https://<korisnik>.github.io/<repozitorij>/

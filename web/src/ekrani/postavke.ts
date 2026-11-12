@@ -8,7 +8,9 @@ import { VERZIJA_APP } from '../obrok';
 import { stanje } from '../stanje';
 import type { Postavke } from '../tipovi';
 import { dokTraje, h, poruka, potvrdi, zamijeni } from '../ui';
-import { kratkoVrijeme } from '../vrijeme';
+import { parsirajStatus, upozorenjaStatusa, type StatusOmotaca } from '../omotac';
+import { MGDL_PO_MMOL } from '../secer';
+import { kratkoVrijeme, opisStarosti, starostMin } from '../vrijeme';
 import type { Navigacija } from '../main';
 
 export const OZNAKE_POSTAVKI: [string, string][] = [
@@ -36,27 +38,71 @@ export async function upari(k: Konfig): Promise<boolean> {
     'Upari',
   );
   if (!ok) return false;
-  stanje.postaviKonfig(k);
+  try {
+    stanje.postaviKonfig(k);
+  } catch (e) {
+    poruka('greska', `Uparivanje NIJE sačuvano: ${e instanceof Error ? e.message : String(e)}`);
+    return false;
+  }
   if (await stanje.osvjezi()) poruka('uspjeh', `Upareno kao "${stanje.boot?.uredjaj.naziv ?? k.naziv}". Veza radi.`);
   else poruka('greska', `Uparivanje je sačuvano, ali test veze nije uspio: ${stanje.bootGreska ?? ''}`);
   return true;
 }
 
-function statusOmotaca(): HTMLElement {
-  const most = window.GlucoBridge;
+function vrijemeIliNema(d: Date | null, sada: Date): string {
+  return d ? `${kratkoVrijeme(d, sada)} (${opisStarosti(starostMin(d, sada))})` : 'nikad';
+}
+
+/** Ekran statusa omotača (SPEC 4): sve iz status() i upozorenje ako očitanje kasni. */
+function statusOmotaca(el: HTMLElement): void {
+  const most = stanje.most?.api;
   if (!most) {
-    return h('p', {}, 'Omotač nije prisutan: aplikacija radi u pregledniku, šećer se unosi ručno.');
+    zamijeni(el, h('p', {}, 'Omotač nije prisutan: aplikacija radi u pregledniku, šećer se unosi ručno.'));
+    return;
   }
+  let s: StatusOmotaca | null = null;
   try {
-    const s = JSON.parse(most.status()) as Record<string, unknown>;
-    return h('dl', { class: 'kv' }, ...Object.entries(s).flatMap(([k, v]) => [h('dt', {}, k), h('dd', {}, String(v))]));
+    s = parsirajStatus(most.status());
   } catch (e) {
-    return h('div', { class: 'upozorenje jako' }, `Status omotača nije pročitan: ${String(e)}`);
+    zamijeni(el, h('div', { class: 'upozorenje jako' }, `Status omotača nije pročitan: ${String(e)}`));
+    return;
   }
+  if (!s) {
+    zamijeni(el, h('div', { class: 'upozorenje jako' }, 'Status omotača nije pročitan.'));
+    return;
+  }
+  const sada = new Date();
+  const z = s.zadnjeOcitanje;
+  const red = (k: string, v: string) => [h('dt', {}, k), h('dd', {}, v)];
+  zamijeni(
+    el,
+    ...upozorenjaStatusa(s, sada).map((u) => h('div', { class: 'upozorenje jako', role: 'alert' }, u)),
+    h(
+      'dl',
+      { class: 'kv' },
+      ...red('Zadnje očitanje', z ? `${broj(z.mgdl / MGDL_PO_MMOL)} mmol/L, ${vrijemeIliNema(z.time, sada)}` : 'nema'),
+      ...red('Zadnji prijem', vrijemeIliNema(s.zadnjiPrijem, sada)),
+      ...red('Očitanja u 24 h', s.ocitanja24h === null ? '?' : String(s.ocitanja24h)),
+      ...red('Najveća rupa u 24 h', s.najvecaRupa24hMin === null ? '?' : `${broj(s.najvecaRupa24hMin)} min`),
+      ...red('Neposlano u tabelu', `${s.neposlano} (slotova od 5 min)`),
+      ...red('Zadnje uspješno slanje', vrijemeIliNema(s.zadnjeSlanje, sada)),
+      ...red('Odbijena očitanja', s.zadnjeOdbijanje ? `${s.odbijeno} (zadnje: ${s.zadnjeOdbijanje})` : String(s.odbijeno)),
+      ...(s.prestaroNeposlano ? red('Prestaro za tabelu', String(s.prestaroNeposlano)) : []),
+      ...red('Optimizacija baterije', s.baterijaBezOgranicenja ? 'isključena (dobro)' : 'UKLJUČENA'),
+      ...red('Verzija omotača', s.verzija),
+    ),
+    h(
+      'div',
+      { class: 'red' },
+      h('button', { class: 'dugme obicno', onclick: () => statusOmotaca(el) }, 'Osvježi status'),
+      h('button', { class: s.baterijaBezOgranicenja ? 'dugme obicno' : 'dugme primarno', onclick: () => most.openBatterySettings() }, 'Postavke baterije'),
+    ),
+  );
 }
 
 export function ekranPostavke(korijen: HTMLElement, _idi: Navigacija): () => void {
   const uredjajEl = h('div');
+  const omotacEl = h('div');
   const parametriEl = h('div');
   const pairInput = h('input', { id: 'pair', type: 'text', autocomplete: 'off', placeholder: 'https://...#pair=...' });
   const tabelaInput = h('input', { id: 'tabela', type: 'url', autocomplete: 'off', value: stanje.tabelaUrl, placeholder: 'https://docs.google.com/spreadsheets/...' });
@@ -102,8 +148,12 @@ export function ekranPostavke(korijen: HTMLElement, _idi: Navigacija): () => voi
             class: 'dugme opasno',
             onclick: async () => {
               if (await potvrdi('Odspojiti uređaj?', 'Uređaj više neće moći čitati ni pisati u tabelu dok se ponovo ne upari.', 'Odspoji')) {
-                stanje.postaviKonfig(null);
-                poruka('info', 'Uređaj je odspojen.');
+                try {
+                  stanje.postaviKonfig(null);
+                  poruka('info', 'Uređaj je odspojen.');
+                } catch (e) {
+                  poruka('greska', `Odspajanje nije uspjelo: ${e instanceof Error ? e.message : String(e)}`);
+                }
               }
             },
           }, 'Odspoji'),
@@ -210,7 +260,7 @@ export function ekranPostavke(korijen: HTMLElement, _idi: Navigacija): () => voi
       }, 'Upari'),
     ),
     h('section', { class: 'kartica' }, h('h2', {}, 'Parametri izračuna (iz tabele)'), parametriEl),
-    h('section', { class: 'kartica' }, h('h2', {}, 'Android omotač'), statusOmotaca()),
+    h('section', { class: 'kartica' }, h('h2', {}, 'Android omotač'), omotacEl),
     h(
       'section',
       { class: 'kartica' },
@@ -232,6 +282,18 @@ export function ekranPostavke(korijen: HTMLElement, _idi: Navigacija): () => voi
     h('p', { class: 'prigusen malo centar' }, `Verzija aplikacije ${VERZIJA_APP}`),
   );
   azuriraj();
+  statusOmotaca(omotacEl);
+  // Status se osvježava i kad se korisnik vrati iz postavki baterije.
+  const naVidljivost = () => {
+    if (document.visibilityState === 'visible') statusOmotaca(omotacEl);
+  };
+  document.addEventListener('visibilitychange', naVidljivost);
+  const tajmer = window.setInterval(() => statusOmotaca(omotacEl), 30_000);
   if (stanje.konfig && !stanje.boot && !stanje.bootUToku) void stanje.osvjezi();
-  return stanje.pretplati(azuriraj);
+  const odjavi = stanje.pretplati(azuriraj);
+  return () => {
+    odjavi();
+    document.removeEventListener('visibilitychange', naVidljivost);
+    window.clearInterval(tajmer);
+  };
 }
