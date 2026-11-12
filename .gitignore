@@ -8,6 +8,9 @@ keystore.properties
 # Build
 .gradle/
 build/
+node_modules/
+dist/
+coverage/
 *.apk
 *.aab
 
