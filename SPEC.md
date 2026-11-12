@@ -1,6 +1,8 @@
 # Bolus dnevnik - specifikacija
 
-Verzija 0.2, 10.11.2026. Ovaj fajl ide u korijen repozitorija i referentni je dokument za sve faze razvoja.
+Verzija 0.3, 11.11.2026. Ovaj fajl ide u korijen repozitorija i referentni je dokument za sve faze razvoja.
+
+Izmjene u odnosu na 0.2 (zaključci Faze 1): broadcast je jedini put do šećera, Health Connect je odbačen; očitanja stižu svake minute; u tabelu ide jedno očitanje po 5-minutnom slotu; određeni minSdk i targetSdk.
 
 Izmjene u odnosu na 0.1: Android omotač je osnovni put za šećer; 4-5 telefona pišu u istu tabelu; dodan grafikon šećera oko obroka; dodana provjera dvostrukog bolusa između uređaja.
 
@@ -33,12 +35,18 @@ Adapteri:
 1. `AndroidBridgeAdapter` (osnovni): čita `window.GlucoBridge.latest()` iz omotača.
 2. `ManualAdapter`: ručni unos u mmol/L. Uvijek dostupan i ima prednost kad ga korisnik upiše.
 
-U omotaču, dva moguća puta do šećera. Faza 1 utvrđuje koji radi na ciljnim telefonima:
+U omotaču je jedini put do šećera broadcast od GlucoDataHandlera (GDH):
 
-- A) Broadcast: `BroadcastReceiver` deklarisan u manifestu za akciju `glucodata.Minute`. Extras: `glucodata.Minute.mgdl` (int, mg/dL), `glucodata.Minute.Time` (long, ms od epohe), `glucodata.Minute.Rate` (float, može biti NaN), `glucodata.Minute.SerialNumber` (string). Uslov: u GDH je uključeno prosljeđivanje broadcasta i odabrana naša aplikacija.
-- B) Health Connect: čitanje zapisa šećera (BloodGlucoseRecord) koje GDH upisuje, uz korisnikovu dozvolu. Daje i historiju unazad.
+- `BroadcastReceiver` deklarisan u manifestu za akciju `glucodata.Minute`. Uslov: u GDH je uključeno prosljeđivanje broadcasta i odabrana naša aplikacija.
+- Koriste se extras: `glucodata.Minute.mgdl` (Integer, mg/dL), `glucodata.Minute.Time` (Long, ms od epohe, vrijeme očitanja), `glucodata.Minute.Rate` (Float, može biti NaN, čuva se samo za prikaz strelice). `glucodata.Minute.SerialNumber` se može logovati.
+- Ignorišu se: `glucodata.Minute.glucose` (zavisi od jedinice podešene u GDH, mmol se uvijek računa iz `mgdl`), `Delta`, `Alarm`, `IOB`, `COB`, `eIOB` i sva `gdh.*` polja.
+- Vrijeme očitanja je uvijek `glucodata.Minute.Time`, nikad vrijeme prijema.
+- Isto očitanje može stići više puta; jedinstvenost je po `glucodata.Minute.Time`.
+- Na Xiaomi (MIUI) telefonima su za prijem u pozadini obavezni Autostart i baterija "Bez ograničenja" za omotač.
 
-Ako rade oba, A je primarni za trenutnu vrijednost, B služi za popunjavanje rupa u krivoj.
+Izmjereno u Fazi 1 (Redmi Note 9 Pro, Android 12, MIUI, GDH 2.5, senzor preko Juggluco): očitanje svakih 60 s; stigne oko 87-91% očitanja; rupe su pojedinačne, do oko 4,5 min; kašnjenje od očitanja do prijema obično oko 5 s, najviše oko 60 s; prijem radi preko noći sa zatvorenom aplikacijom i zaključanim telefonom.
+
+Health Connect je odbačen u Fazi 1: GDH 2.5 na Androidu 12 ne traži dozvolu za Health Connect i ništa ne upisuje, pa čitanje daje 0 očitanja. Rupe u krivoj popunjava lokalna baza omotača (14 dana). Health Connect bi inače davao najviše 30 dana unazad od davanja dozvole.
 
 Konverzija: mmol/L = mg/dL / 18.016, zaokruženo na jednu decimalu tek pri prikazu.
 
@@ -46,18 +54,19 @@ Očitanje starije od N minuta (postavka, podrazumijevano 10) prikazuje se kao za
 
 ## 4. Android omotač
 
-- `minSdk` i `targetSdk` odrediti u Fazi 1 prema verzijama Androida na ciljnim telefonima i zahtjevima Health Connecta.
+- `minSdk 26` (Android 8), `targetSdk 36`. Ako neki od ciljnih telefona ima Android stariji od 8, ovo se preispituje.
 - `MainActivity`: WebView, učitava URL web dijela. Navigacija van tog origina se otvara u vanjskom pregledniku. JavaScript most se izlaže samo stranici sa tog origina.
-- `GlucoReceiver`: prijem broadcasta, validacija (mgdl 20-600, vrijeme ne u budućnosti više od 2 min), upis u lokalnu bazu. Bez ikakve mreže u receiveru.
-- Lokalna baza (Room): tabela `ocitanja` (vrijeme_ms PRIMARY KEY, mgdl, izvor, poslano BOOLEAN). Čuva zadnjih 14 dana.
-- `UploadWorker` (WorkManager, periodično 15 min + odmah nakon otvaranja aplikacije): šalje neposlana očitanja akcijom `saveGlucose`, označava ih poslanim tek nakon `ok`.
+- `GlucoReceiver`: prijem broadcasta, validacija, upis u lokalnu bazu sa `INSERT OR IGNORE` po `vrijeme_ms`. Validacija: `mgdl` je Integer 20-600; `Time` postoji, nije u budućnosti više od 2 min i nije starije od 14 dana. Nevaljano očitanje se ne upisuje, nego se broji (za `status()`). Bez ikakve mreže u receiveru.
+- Lokalna baza (Room): tabela `ocitanja` (vrijeme_ms PRIMARY KEY, mgdl, rate REAL NULL, izvor, poslano BOOLEAN). Čuva zadnjih 14 dana, sva očitanja (svake minute).
+- `UploadWorker` (WorkManager, periodično 15 min + odmah nakon otvaranja aplikacije): akcijom `saveGlucose` šalje jedno očitanje po 5-minutnom slotu (prvo očitanje u slotu, slot = vrijeme zaokruženo naniže na 5 min). Ostala očitanja iz poslanih slotova se samo označe poslanim. Označava ih poslanim tek nakon `ok`.
+- Bezbjednost: receiver je izložen i Android ne javlja ko je poslao broadcast, pa druga aplikacija na istom telefonu može poslati lažno očitanje. To se ne može spriječiti; zato web dio šećer iz omotača uvijek prikazuje sa izvorom i starošću prije izračuna.
 - Konfiguracija (URL servisa, token, naziv uređaja) u EncryptedSharedPreferences ili Android Keystore. Postavlja se uparivanjem (QR ili link).
 - Most `window.GlucoBridge`:
   - `latest(): string` - JSON `{mgdl, time, rate, source}` ili `null`
   - `history(fromMs, toMs): string` - JSON niz `{mgdl, time}` iz lokalne baze
-  - `status(): string` - JSON: verzija omotača, zadnje primljeno očitanje, broj neposlanih, stanje Health Connect dozvole, je li optimizacija baterije isključena
+  - `status(): string` - JSON: verzija omotača, zadnje primljeno očitanje, broj neposlanih, broj odbijenih očitanja, najveća rupa u zadnja 24 h, je li optimizacija baterije isključena
   - `getConfig(): string`, `setConfig(json)` - konfiguracija uređaja
-  - `requestHealthConnect()`, `openBatterySettings()`
+  - `openBatterySettings()`
 - Svi rezultati mosta su stringovi (JSON), jer WebView most prenosi samo jednostavne tipove.
 - Ekran statusa u Postavkama prikazuje sve iz `status()` i upozorava ako zadnje očitanje kasni više od 15 min.
 
@@ -75,7 +84,7 @@ Vremenska zona tabele: Europe/Sarajevo. Vremena se šalju kao ISO 8601 sa offset
 
 `Uredjaji`: `naziv`, `token`, `aktivan` (TRUE/FALSE), `smije_mijenjati_postavke` (TRUE/FALSE), `zadnji_kontakt`
 
-`Secer`: `vrijeme`, `mgdl`, `mmol`, `uredjaj`. Jedan red po očitanju; duplikati sa više uređaja se odbacuju (vidi 6).
+`Secer`: `slot`, `vrijeme`, `mgdl`, `mmol`, `uredjaj`. Jedan red po 5-minutnom slotu (`slot` = vrijeme očitanja zaokruženo naniže na 5 min); duplikati sa više uređaja se odbacuju (vidi 6). Oko 288 redova dnevno.
 
 Parametri korišteni u izračunu upisuju se u svaki red obroka, tako da se stari unosi mogu provjeriti i nakon promjene postavki.
 
@@ -85,7 +94,7 @@ POST zahtjevi idu kao `Content-Type: text/plain` sa JSON tijelom (izbjegava CORS
 
 - `saveMeal {meal, items}` - upis u `Obroci` i `Stavke`; idempotentno po `id`.
 - `confirm {id, dato_j, vrijeme_potvrde, force}` - potvrda inzulina. Prije upisa server traži drugi obrok sa `inzulin_dat=TRUE` i `vrijeme_potvrde` u zadnjih N minuta (postavka `prozor_dupli_bolus_min`, podrazumijevano 120). Ako postoji i `force` nije `true`, vraća `{ok:false, warning:"recent_bolus", uredjaj, dato_j, vrijeme}` i ništa ne upisuje. Sa `force:true` upisuje i postavlja `upozorenje_prihvaceno=TRUE`.
-- `saveGlucose {readings:[{time, mgdl}]}` - upisuje samo očitanja čije vrijeme nije već u `Secer` (tolerancija 30 s). Vraća broj upisanih i preskočenih.
+- `saveGlucose {readings:[{time, mgdl}]}` - server za svako očitanje računa `slot` (vrijeme zaokruženo naniže na 5 min) i upisuje ga samo ako taj slot još nije u `Secer`. Provjera gleda samo zadnjih 7 dana lista, ne cijeli list; očitanje starije od toga se odbija. Vraća broj upisanih i preskočenih.
 - `getGlucose {from, to}` - očitanja za prozor, sortirano po vremenu.
 - `saveFood {food}`, `saveSettings {settings}` (odbija uređaje bez `smije_mijenjati_postavke`).
 - `bootstrap` - postavke, namirnice, zadnjih 30 obroka, zadnji potvrđen bolus (sa bilo kojeg uređaja) i vrijeme servera.
@@ -138,7 +147,7 @@ Jezik: bosanski. Decimalni unos prihvata zarez i tačku. Dodirne površine najma
 ## 10. Faze
 
 - Faza 0: priprema računara i naloga (bez koda).
-- Faza 1: Android spike - minimalna aplikacija koja prima broadcast i čita Health Connect; test na jednom telefonu.
+- Faza 1: Android spike - minimalna aplikacija koja prima broadcast i čita Health Connect; test na jednom telefonu. Završeno 11.11.2026, zaključci u tački 3.
 - Faza 2: Sheet + Apps Script API + testovi.
 - Faza 3: modul izračuna sa testovima.
 - Faza 4: web ekrani (ručni šećer), objava na GitHub Pages.
@@ -166,5 +175,5 @@ Testovi servera (minimum): dupli `saveMeal`; `confirm` sa i bez prethodnog bolus
 - Da li se UH odnos vodi kao "g UH po 1 j." ili drugačije.
 - Zaokruživanje: na najbliži korak ili uvijek naniže.
 - Šta znači "aplikacija sama računa" (ukupna dnevna doza ili profili po dobu dana).
-- Verzije Androida na svih pet telefona.
-- Da li GDH na ciljnim telefonima prosljeđuje broadcast odabranoj aplikaciji i da li upisuje šećer u Health Connect (Faza 1).
+- Verzije Androida na ostala četiri telefona (prvi: Redmi Note 9 Pro, Android 12).
+- Da li na ostala četiri telefona rade Juggluco, GDH i broadcast prema omotaču (na prvom radi, Faza 1).

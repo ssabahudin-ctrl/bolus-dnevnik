@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Bolus spike</string>
+    <string name="btn_hc">Health Connect dozvola i čitanje (6 h)</string>
+    <string name="btn_hc30">HC 30 dana</string>
+    <string name="btn_refresh">Osvježi</string>
+    <string name="btn_clear">Obriši log</string>
+    <string name="btn_battery">Postavke baterije</string>
+    <string name="btn_copy">Kopiraj izvještaj</string>
+</resources>

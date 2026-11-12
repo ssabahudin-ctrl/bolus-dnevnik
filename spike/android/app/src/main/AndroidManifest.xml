@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.health.READ_BLOOD_GLUCOSE" />
+
+    <queries>
+        <!-- Health Connect (Android 13 i stariji) -->
+        <package android:name="com.google.android.apps.healthdata" />
+        <!-- GlucoDataHandler, samo da ispišemo verziju -->
+        <package android:name="de.michelinside.glucodatahandler" />
+    </queries>
+
+    <application
+        android:allowBackup="false"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@android:style/Theme.Material.Light.DarkActionBar">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Health Connect traži ekran sa objašnjenjem dozvole (Android 13 i stariji) -->
+            <intent-filter>
+                <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
+            </intent-filter>
+        </activity>
+
+        <!-- Isto za Android 14+ -->
+        <activity-alias
+            android:name="ViewPermissionUsageActivity"
+            android:exported="true"
+            android:permission="android.permission.START_VIEW_PERMISSION_USAGE"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW_PERMISSION_USAGE" />
+                <category android:name="android.intent.category.HEALTH_PERMISSIONS" />
+            </intent-filter>
+        </activity-alias>
+
+        <!-- GDH šalje broadcast eksplicitno našem paketu, pa radi i receiver iz manifesta -->
+        <receiver
+            android:name=".GlucoReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="glucodata.Minute" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

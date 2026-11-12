@@ -1,0 +1,17 @@
+# Lokalne vrijednosti i tajne (CLAUDE.md)
+.env
+local.properties
+keystore.properties
+*.jks
+*.keystore
+
+# Build
+.gradle/
+build/
+*.apk
+*.aab
+
+# IDE
+.idea/
+*.iml
+.DS_Store
